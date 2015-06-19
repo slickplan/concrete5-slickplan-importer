@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<concrete5-slickplan-importer version="1.0">
+    <singlepages>
+        <page
+            name="Slickplan Importer"
+            path="/dashboard/system/backup/slickplan_importer"
+            filename="/dashboard/system/backup/slickplan_importer.php"
+            pagetype=""
+            description=""
+            package="slickplan_importer"
+        />
+    </singlepages>
+</concrete5-slickplan-importer>
