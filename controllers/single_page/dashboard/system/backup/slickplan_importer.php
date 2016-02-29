@@ -20,10 +20,8 @@ use \PageTemplate;
 use \PageType;
 use \UserList;
 
-if (!ini_get('safe_mode')) {
-    @set_time_limit(600);
-    ini_set('max_execution_time', 600);
-}
+function_exists('ob_start') and ob_start();
+function_exists('set_time_limit') and set_time_limit(600);
 
 class SlickplanImporter extends DashboardPageController
 {
@@ -39,6 +37,8 @@ class SlickplanImporter extends DashboardPageController
         'post_type' => '',
         'content_files' => false,
         'users' => array(),
+        'internal_links' => array(),
+        'imported_pages' => array(),
     );
 
     /**
@@ -54,6 +54,13 @@ class SlickplanImporter extends DashboardPageController
      * @var array
      */
     private $_files = array();
+
+    /**
+     * If page has unparsed internal pages
+     *
+     * @var bool
+     */
+    private $_has_unparsed_internal_links = false;
 
     /**
      * Upload page
@@ -110,8 +117,14 @@ class SlickplanImporter extends DashboardPageController
                 $this->options = array(
                     'titles' => isset($form['titles_change']) ? $form['titles_change'] : '',
                     'content' => isset($form['content']) ? $form['content'] : '',
-                    'content_files' => (isset($form['content_files']) and $form['content_files']),
+                    'content_files' => (
+                        isset($form['content'], $form['content_files'])
+                        and $form['content'] === 'contents'
+                        and $form['content_files']
+                    ),
                     'users' => isset($form['users_map']) ? $form['users_map'] : array(),
+                    'internal_links' => array(),
+                    'imported_pages' => array(),
                 );
                 if ($this->options['content_files']) {
                     $xml['import_options'] = $this->options;
@@ -123,10 +136,34 @@ class SlickplanImporter extends DashboardPageController
                             $this->_importPages($xml['sitemap'][$type], $xml['pages']);
                         }
                     }
+                    $this->_checkForInternalLinks();
                     $xml['summary'] = implode($this->summary);
                     $_SESSION['slickplan_importer'] = $xml;
                     $this->redirect('/dashboard/system/backup/slickplan_importer/done');
                 }
+            } else {
+                $no_of_files = 0;
+                $filesize_total = array();
+                if (isset($xml['pages']) and is_array($xml['pages'])) {
+                    foreach ($xml['pages'] as $page) {
+                        if (isset($page['contents']['body']) and is_array($page['contents']['body'])) {
+                            foreach ($page['contents']['body'] as $body) {
+                                if (isset($body['content']['type']) and $body['content']['type'] === 'library') {
+                                    ++$no_of_files;
+                                }
+                                if (isset($body['content']['file_size'], $body['content']['file_id']) and $body['content']['file_size']) {
+                                    $filesize_total[$body['content']['file_id']] = (int)$body['content']['file_size'];
+                                }
+                            }
+                        }
+                    }
+                }
+                $filesize_total = (int)array_sum($filesize_total);
+                $size = array('B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB');
+                $factor = (int)floor((strlen($filesize_total) - 1) / 3);
+                $filesize_total = round($filesize_total / pow(1024, $factor)) . $size[$factor];
+                $this->set('no_of_files', $no_of_files);
+                $this->set('filesize_total', $filesize_total);
             }
         } else {
             $this->redirect('/dashboard/system/backup/slickplan_importer/import');
@@ -150,7 +187,6 @@ class SlickplanImporter extends DashboardPageController
             )));
             if ($this->isPost() and is_array($this->post('slickplan'))) {
                 $form = $this->post('slickplan');
-                set_time_limit(600);
                 $result = array();
                 if (isset($xml['import_options'])) {
                     if (isset($xml['pages'][$form['page']]) and is_array($xml['pages'][$form['page']])) {
@@ -163,7 +199,12 @@ class SlickplanImporter extends DashboardPageController
                     }
                     if (isset($form['last']) and $form['last']) {
                         $result['last'] = $form['last'];
+                        $this->_checkForInternalLinks();
                         unset($_SESSION['slickplan_importer']);
+                    }
+                    else {
+                        $xml['import_options'] = $this->options;
+                        $_SESSION['slickplan_importer'] = $xml;
                     }
                 }
                 ob_clean();
@@ -397,16 +438,10 @@ class SlickplanImporter extends DashboardPageController
             $entry = $page_parent->add($page_type, $page, $template);
             if ($entry) {
                 // Set post content
+                $page_content = '';
                 if ($this->options['content'] === 'desc') {
                     if (isset($data['desc']) and !empty($data['desc'])) {
-                        if ($controls) {
-                            $content_data = array(
-                                'content' => $data['desc'],
-                            );
-                            $content_block->publishToPage($entry, $content_data, $controls);
-                        } else {
-                            throw new Exception('Cannot add content, content block not found');
-                        }
+                        $page_content = $data['desc'];
                     }
                 } elseif ($this->options['content'] === 'contents') {
                     if (
@@ -414,14 +449,25 @@ class SlickplanImporter extends DashboardPageController
                         and is_array($data['contents']['body'])
                         and count($data['contents']['body'])
                     ) {
-                        if ($controls) {
-                            $content_data = array(
-                                'content' => $this->_getFormattedContent($data['contents']['body']),
-                            );
-                            $content_block->publishToPage($entry, $content_data, $controls);
-                        } else {
-                            throw new Exception('Content block not found');
+                        $page_content = $this->_getFormattedContent($data['contents']['body']);
+                    }
+                }
+
+                if ($page_content) {
+                    $this->_has_unparsed_internal_links = false;
+                    if ($controls) {
+                        // Check if page has internal links, we need to replace them later
+                        $updated_content = $this->_parseInternalLinks($page_content);
+                        if ($updated_content) {
+                            $page_content = $updated_content;
                         }
+
+                        $content_data = array(
+                            'content' => $page_content,
+                        );
+                        $content_block->publishToPage($entry, $content_data, $controls);
+                    } else {
+                        throw new Exception('Content block not found');
                     }
                 }
 
@@ -455,6 +501,16 @@ class SlickplanImporter extends DashboardPageController
                 'mlid' => $entry->getCollectionID(),
                 'files' => $this->_files,
             );
+
+            // Save page permalink
+            if (isset($data['@attributes']['id'])) {
+                $this->options['imported_pages'][$data['@attributes']['id']] = $return['url'];
+            }
+
+            // Check if page has unparsed internal links, we need to replace them later
+            if ($this->_has_unparsed_internal_links) {
+                $this->options['internal_links'][] = $return['ID'];
+            }
         } catch (Exception $e) {
             $return = array(
                 'title' => $page['cName'],
@@ -869,6 +925,65 @@ class SlickplanImporter extends DashboardPageController
             return ($a['order'] < $b['order']) ? -1 : 1;
         }
         return 0;
+    }
+
+    /**
+     * Replace internal links with correct pages URLs.
+     *
+     * @param $content
+     * @param $force_parse
+     * @return bool
+     */
+    private function _parseInternalLinks($content, $force_parse = false)
+    {
+        preg_match_all('/href="slickplan:([a-z0-9]+)"/isU', $content, $internal_links);
+        if (isset($internal_links[1]) and is_array($internal_links[1]) and count($internal_links[1])) {
+            $internal_links = array_unique($internal_links[1]);
+            $links_replace = array();
+            foreach ($internal_links as $cell_id) {
+                if (
+                    isset($this->options['imported_pages'][$cell_id])
+                    and $this->options['imported_pages'][$cell_id]
+                ) {
+                    $links_replace['="slickplan:' . $cell_id . '"'] = '="'
+                        . htmlspecialchars($this->options['imported_pages'][$cell_id]) . '"';
+                } elseif ($force_parse) {
+                    $links_replace['="slickplan:' . $cell_id . '"'] = '="#"';
+                } else {
+                    $this->_has_unparsed_internal_links = true;
+                }
+            }
+            if (count($links_replace)) {
+                return strtr($content, $links_replace);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check if there are any pages with unparsed internal links, if yes - replace links with real URLs
+     */
+    private function _checkForInternalLinks()
+    {
+        if (isset($this->options['internal_links']) and is_array($this->options['internal_links'])) {
+            foreach ($this->options['internal_links'] as $page_id) {
+                $page = Page::getByID($page_id);
+                foreach ($page->getBlocks() as $block) {
+                    if ($block->getBlockTypeHandle() === 'content') {
+                        $page_content = $block->getInstance()->getContent();
+                        $updated_content = $this->_parseInternalLinks($page_content);
+                        if ($updated_content) {
+                            $content_data = array(
+                                'content' => $updated_content,
+                            );
+                            $block->getInstance()->save($content_data);
+                            $block->refreshCache();
+                        }
+                        break;
+                    }
+                }
+            }
+        }
     }
 
 }

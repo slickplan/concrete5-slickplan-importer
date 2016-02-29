@@ -20,7 +20,7 @@ class Controller extends Package
     /**
      * @var string
      */
-    protected $pkgVersion = '1.0.1';
+    protected $pkgVersion = '2.1.0';
 
     /**
      * @return string
@@ -35,7 +35,7 @@ class Controller extends Package
      */
     public function getPackageDescription()
     {
-        return t('Import pages from a Slickplan’s XML export file');
+        return t('Quickly import your Slickplan project into your concrete5 site');
     }
 
     /**

@@ -47,13 +47,15 @@ if ($action === 'options') {
                     Import page content
                 </label>
             </div>
-            <div class="checkbox" style="padding-left: 20px;">
-                <label>
-                    <input type="checkbox" name="slickplan_importer[content_files]" value="1">
-                    Import files to media library
-                </label>
-                <small class="help-block">(Downloading files may take a while)</small>
-            </div>
+            <?php if (isset($no_of_files) and $no_of_files) { ?>
+                <div class="checkbox" style="padding-left: 20px;">
+                    <label>
+                        <input type="checkbox" name="slickplan_importer[content_files]" value="1">
+                        Import files to media library
+                    </label>
+                    <small class="help-block">(Downloading files may take a while, approx total size: <?php echo $filesize_total; ?>)</small>
+                </div>
+            <?php } ?>
             <div class="radio">
                 <label>
                     <input type="radio" name="slickplan_importer[content]" value="desc">
@@ -248,7 +250,8 @@ if ($action === 'options') {
         <fieldset>
             <legend>Select XML file to import</legend>
             <div class="alert alert-info" role="alert">
-                <p>This importer allows you to import pages structure from a Slickplan’s XML file into your WordPress site.</p>
+                <p>The Slickplan Importer plugin allows you to quickly import your <a href="http://slickplan.com" target="_blank">Slickplan</a> projects into your concrete5 site.</p>
+                <p>Upon import, your pages, navigation structure, and content will be instantly ready in your CMS.</p>
                 <p>Pick a XML file to upload and click Import.</p>
             </div>
             <div class="control-group">
